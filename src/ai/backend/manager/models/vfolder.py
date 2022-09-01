@@ -41,6 +41,7 @@ __all__: Sequence[str] = (
     "vfolders",
     "vfolder_invitations",
     "vfolder_permissions",
+    "vfolder_status",
     "VirtualFolder",
     "VFolderUsageMode",
     "VFolderOwnershipType",
@@ -113,6 +114,7 @@ class VFolderOperationStatus(str, enum.Enum):
     """
     Introduce virtual folder status for storage-proxy operations.
     """
+
     READY = "ready"
     PREPARING = "preparing"
     CLONING = "cloning"
@@ -220,6 +222,31 @@ vfolder_permissions = sa.Table(
         nullable=False,
     ),
     sa.Column("user", GUID, sa.ForeignKey("users.uuid"), nullable=False),
+)
+
+
+vfolder_status = sa.Table(
+    "vfolder_status",
+    metadata,
+    sa.Column(
+        "status",
+        EnumValueType(VFolderOperationStatus),
+        default=VFolderOperationStatus.READY,
+        nullable=False,
+    ),
+    sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+    sa.Column(
+        "modified_at",
+        sa.DateTime(timezone=True),
+        nullable=True,
+        onupdate=sa.func.current_timestamp(),
+    ),
+    sa.Column(
+        "vfolder",
+        GUID,
+        sa.ForeignKey("vfolders.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+    ),
 )
 
 
