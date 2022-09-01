@@ -47,6 +47,7 @@ __all__: Sequence[str] = (
     "VFolderInvitationState",
     "VFolderPermission",
     "VFolderPermissionValidator",
+    "VFolderOperationStatus",
     "query_accessible_vfolders",
     "get_allowed_vfolder_hosts_by_group",
     "get_allowed_vfolder_hosts_by_user",
@@ -106,6 +107,16 @@ class VFolderInvitationState(str, enum.Enum):
     CANCELED = "canceled"  # canceled by inviter
     ACCEPTED = "accepted"
     REJECTED = "rejected"  # rejected by invitee
+
+
+class VFolderOperationStatus(str, enum.Enum):
+    """
+    Introduce virtual folder status for storage-proxy operations.
+    """
+    READY = "ready"
+    PREPARING = "preparing"
+    CLONING = "cloning"
+    DELETING = "deleting"
 
 
 vfolders = sa.Table(
