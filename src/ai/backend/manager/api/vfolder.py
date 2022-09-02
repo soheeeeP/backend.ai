@@ -38,6 +38,7 @@ from ..models import (
     KernelStatus,
     UserRole,
     VFolderInvitationState,
+    VFolderOperationStatus,
     VFolderOwnershipType,
     VFolderPermission,
     VFolderPermissionValidator,
@@ -54,6 +55,7 @@ from ..models import (
     verify_vfolder_name,
     vfolder_invitations,
     vfolder_permissions,
+    vfolder_status,
     vfolders,
 )
 from .auth import admin_required, auth_required, superadmin_required
@@ -409,6 +411,11 @@ async def create(request: web.Request, params: Any) -> web.Response:
         except sa.exc.DataError:
             raise InvalidAPIParameters
         assert result.rowcount == 1
+
+        query = sa.insert(
+            vfolder_status, {"vfolder": folder_id.hex, "status": VFolderOperationStatus.READY}
+        )
+        await conn.execute(query)
     return web.json_response(resp, status=201)
 
 
@@ -518,6 +525,12 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
     log.info("VFOLDER.DELETE_BY_ID (ak:{}, vf:{})", access_key, params["id"])
     async with root_ctx.db.begin() as conn:
         query = (
+            sa.update(vfolder_status)
+            .values(status=VFolderOperationStatus.DELETING)
+            .where(vfolder_status.c.vfolder == params["id"])
+        )
+        await conn.execute(query)
+        query = (
             sa.select([vfolders.c.host]).select_from(vfolders).where(vfolders.c.id == params["id"])
         )
         folder_host = await conn.scalar(query)
@@ -536,6 +549,13 @@ async def delete_by_id(request: web.Request, params: Any) -> web.Response:
         },
     ):
         pass
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.update(vfolder_status)
+            .values(status=VFolderOperationStatus.READY)
+            .where(vfolder_status.c.vfolder == params["id"])
+        )
+        await conn.execute(query)
     return web.Response(status=204)
 
 
@@ -1787,6 +1807,13 @@ async def delete(request: web.Request) -> web.Response:
             raise InvalidAPIParameters("Cannot delete the vfolder " "that is not owned by myself.")
         folder_host = entry["host"]
         folder_id = entry["id"]
+        query = (
+            sa.update(vfolder_status)
+            .values(status=VFolderOperationStatus.DELETING)
+            .where(vfolder_status.c.vfolder == folder_id)
+        )
+        await conn.execute(query)
+
         query = sa.delete(vfolders).where(vfolders.c.id == folder_id)
         await conn.execute(query)
     # fs-level deletion may fail or take longer time
@@ -1939,6 +1966,19 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
         if "user" not in allowed_vfolder_types:
             raise InvalidAPIParameters("user vfolder cannot be created in this host")
 
+        query = (
+            sa.select([vfolders.c.id]).select_from(vfolders).where(vfolders.c.name == row["name"])
+        )
+        result = await conn.execute(query)
+        target_vfolder = result.first()
+
+        query = (
+            sa.update(vfolder_status)
+            .values(status=VFolderOperationStatus.CLONING)
+            .where(vfolder_status.c.vfolder == target_vfolder.id)
+        )
+        await conn.execute(query)
+
         # Generate the ID of the destination vfolder.
         # TODO: If we refactor to use ORM, the folder ID will be created from the database by inserting
         #       the actual object (with RETURNING clause).  In that case, we need to temporarily
@@ -1986,6 +2026,11 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             # TODO: pass exception info
             raise InvalidAPIParameters
 
+        query = sa.insert(
+            vfolder_status, {"vfolder": folder_id.hex, "status": VFolderOperationStatus.READY}
+        )
+        await conn.execute(query)
+
     # Start the clone operation as a background task.
     async def _clone_bgtask(reporter: ProgressReporter) -> None:
         async with root_ctx.storage_manager.request(
@@ -2002,6 +2047,14 @@ async def clone(request: web.Request, params: Any, row: VFolderRow) -> web.Respo
             pass
 
     task_id = await root_ctx.background_task_manager.start(_clone_bgtask)
+
+    async with root_ctx.db.begin() as conn:
+        query = (
+            sa.update(vfolder_status)
+            .values(status=VFolderOperationStatus.READY)
+            .where(vfolder_status.c.vfolder == target_vfolder.id)
+        )
+        await conn.execute(query)
 
     # Return the information about the destination vfolder.
     resp = {
